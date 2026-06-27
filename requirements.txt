@@ -1,0 +1,23 @@
+# Core scientific stack
+numpy>=1.24
+pandas>=2.0
+geopandas>=0.14
+scipy>=1.11
+shapely>=2.0
+
+# Optimisation
+pulp>=2.7
+
+# Visualisation
+matplotlib>=3.7
+
+# H3 spatial indexing
+h3>=3.7
+
+# Transit routing (optional — only needed for 00_rerun_transit.py)
+# r5py>=0.1          # uncomment if re-running transit travel times
+                     # also requires Java 11+
+
+# Geospatial utilities
+fiona>=1.9
+pyproj>=3.5

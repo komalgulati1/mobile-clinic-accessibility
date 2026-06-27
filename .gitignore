@@ -1,0 +1,50 @@
+# Data — not tracked (too large / proprietary)
+data/raw/
+data/processed/
+*.osm
+*.osm.pbf
+*.zip
+*.gz
+
+# Outputs — selectively tracked (see outputs/README.md)
+outputs/maps/
+outputs/plots/
+outputs/tables/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Environments
+.env
+.venv
+env/
+venv/
+*.conda
+*.lock
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
