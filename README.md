@@ -195,20 +195,8 @@ Uncertainty is quantified via $N=200$ Monte Carlo draws.
 
 ---
 
-## Citation
-
-If you use this code in your research, please cite:
-
-```
-Gulati, K. (2025). P-Median accessibility framework for mobile clinic
-stop selection with microtransit coordination. Presented at ASCE
-Transportation Conference 2026, Detroit, MI.
-```
-
----
-
 ## Contact
 
-Komal Gulati · gulatikomal@aggies.ncat.edu  
+Komal Gulati · kgulati@ncat.edu  
 CR2C2 — Center for Regional and Rural Connected Communities  
 NC A&T State University, Greensboro, NC
