@@ -58,10 +58,23 @@ CANDIDATE_NAICS = [813110, 611110, 624410, 621111,
 ALPHA_CAR = -0.020097;  BETA_CAR = 1.361630
 ALPHA_TR  = -0.002062;  BETA_TR  = 1.608027
 ALPHA_MC  = ALPHA_CAR;  BETA_MC  = BETA_CAR
-SHAPE_W   = 1.79;       SCALE_W  = 4.2    # Weibull microtransit waiting time
 
 import math
-W_MEAN = SCALE_W * math.gamma(1 + 1/SHAPE_W)   # mean Weibull waiting time
+
+# ── Microtransit (RCATS) range parameters ─────────────────────────────────────
+# t_ij^mt = delta * t_ij^car + W
+# delta: detour ratio (Weibull-AFT, k=1.069, hu2025)
+# W:     waiting time (Weibull, k=2.084, lambda=19.901 min, yang2025)
+# Mean Weibull wait = lambda * Gamma(1 + 1/k) = 19.901 * Gamma(1.480) ≈ 17.67 min
+# Three scenarios: optimistic / baseline / pessimistic
+MC_SCENARIOS = {
+    'car_microtrans_opt':  {'delta': 1.0, 'W': 3.74,  'label': 'Car + Microtransit (optimistic)',  'ls': ':',  'lw': 1.8},
+    'car_microtrans':      {'delta': 1.3, 'W': 10.00, 'label': 'Car + Microtransit (baseline)',    'ls': '--', 'lw': 2.2},
+    'car_microtrans_pess': {'delta': 2.0, 'W': 17.67, 'label': 'Car + Microtransit (pessimistic)', 'ls': ':',  'lw': 1.8},
+}
+# optimistic:  delta=1.0 (no shared detour), W=3.74 min (low wait)
+# baseline:    delta=1.3 (empirical median detour, hu2025), W=10 min (moderate wait)
+# pessimistic: delta=2.0 (upper bound detour, hu2025), W=17.67 min (mean Weibull, yang2025)
 
 PI = {'ec': 0.85, 'enc': 0.90, 'nec': 0.55, 'nenc': 0.60}
 MOE_Z    = 1.645
@@ -151,56 +164,21 @@ COUNTY_HH  = max(sum(float(dict(zip(headers_veh,r)).get('B08201_001E',0) or 0)
 COUNTY_ZV_SHARE = COUNTY_ZV / COUNTY_HH
 
 hex_eld_est = {}; hex_total_pop = {}; hex_zv_share_map = {}
-
-# ── Load hex-level elderly estimates and total population ─────────────────────
 if os.path.exists(HEX_ELDERLY_SE):
     _df = pd.read_csv(HEX_ELDERLY_SE)
-    print(f'  HEX_ELDERLY_SE cols: {_df.columns.tolist()}')
-
-    # elderly_est: load all rows with non-zero values
-    if 'elderly_est' in _df.columns:
-        _p = _df[_df['elderly_est'] > 0]
-        if len(_p):
-            hex_eld_est = dict(zip(_p['hex_id'], _p['elderly_est']))
-            print(f'  Loaded hex elderly_est: {len(hex_eld_est)} hexes')
-        else:
-            print(f'  WARNING: elderly_est all zero in HEX_ELDERLY_SE -- using county average fallback')
-
-    # total_pop: load if column exists
+    if 'SE_elderly_vrt' in _df.columns:
+        _p = _df[_df['SE_elderly_vrt'] > 0]
+        if len(_p): hex_eld_est = dict(zip(_p['hex_id'], _p['elderly_est']))
     if 'total_pop' in _df.columns:
         _p = _df[_df['total_pop'] > 0]
-        if len(_p):
-            hex_total_pop = dict(zip(_p['hex_id'], _p['total_pop']))
-            print(f'  Loaded hex total_pop: {len(hex_total_pop)} hexes')
-        else:
-            print(f'  WARNING: total_pop all zero -- using county average fallback')
-    else:
-        print(f'  WARNING: total_pop column missing from HEX_ELDERLY_SE')
-        print(f'  Trying to load total_pop from ACS block group data directly...')
-        # Derive hex-level total pop from ACS block group via area interpolation
-        # using the VRT summary file which has bg-level elderly
-        VRT_CSV = f'{OUTPUTS}/hexagon_vrt_summary.csv'
-        if os.path.exists(VRT_CSV):
-            _vrt = pd.read_csv(VRT_CSV)
-            print(f'  VRT summary cols: {_vrt.columns.tolist()}')
-            # VRT has bg_geoid and elderly_est -- use to infer hex pop
-            # but without bg-to-hex crosswalk we cannot do this here
-            print(f'  VRT summary loaded but hex crosswalk needed for total_pop')
-        print(f'  Using county average total_pop fallback: {COUNTY_TOTAL/N_HEX:.1f} per hex')
-else:
-    print(f'  WARNING: HEX_ELDERLY_SE not found at {HEX_ELDERLY_SE}')
-
-# ── Load hex-level zero-vehicle share ─────────────────────────────────────────
+        if len(_p): hex_total_pop = dict(zip(_p['hex_id'], _p['total_pop']))
 if os.path.exists(HEX_ZVEH_SHARE):
     _df = pd.read_csv(HEX_ZVEH_SHARE)
     if 'zv_share' in _df.columns:
         hex_zv_share_map = dict(zip(_df['hex_id'], _df['zv_share']))
-        print(f'  Loaded hex zv_share: {len(hex_zv_share_map)} hexes')
 
-# ── Build n_ig ────────────────────────────────────────────────────────────────
 n_per_hex = COUNTY_TOTAL / N_HEX
 n_ig = {}
-n_uniform_fallback = 0  # count hexes using fallback
 for hid in hex_ids:
     n_h  = hex_total_pop.get(hid, n_per_hex)
     e_h  = min(hex_eld_est.get(hid, COUNTY_ELDERLY/N_HEX), n_h)
@@ -212,20 +190,7 @@ for hid in hex_ids:
         'nec':  nn_h * (1 - zv_h),
         'nenc': nn_h * zv_h,
     }
-    if hid not in hex_total_pop:
-        n_uniform_fallback += 1
-
-total_pop_loaded = sum(sum(v.values()) for v in n_ig.values())
-print(f'  Total pop (n_ig sum): {total_pop_loaded:.0f}')
-print(f'  Hexes using uniform fallback: {n_uniform_fallback}/{N_HEX}')
-if n_uniform_fallback == N_HEX:
-    print(f'  WARNING: ALL hexes using uniform fallback -- population NOT spatially disaggregated')
-    print(f'  This means stop selection will be driven by geography alone, not population density')
-    print(f'  Fix: ensure hexagon_elderly_SE.csv contains total_pop and non-zero elderly_est')
-elif n_uniform_fallback > 0:
-    print(f'  PARTIAL fallback: {n_uniform_fallback} hexes using county average')
-else:
-    print(f'  OK: all hexes have hex-specific population estimates')
+print(f'  Total pop: {sum(sum(v.values()) for v in n_ig.values()):.0f}')
 tock(t0, 'Build n_ig')
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -252,19 +217,24 @@ if os.path.exists(TT_TRANSIT):
 else:
     print(f'  Transit OD file not found — transit modes skipped')
 
-# Microtransit impedance (car leg + mean Weibull waiting time)
+# Microtransit impedance — three scenarios (delta * t_car + W)
 raw_tt_car = {}
 for row in car_df.itertuples(index=False):
     raw_tt_car.setdefault(row.from_hex, {})[row.to_hex] = row.travel_time_min
 
-W_mc = {}
-for i in hex_ids:
-    W_mc[i] = {}
-    for j in J_ids:
-        t_c = raw_tt_car.get(i, {}).get(j, np.nan)
-        if np.isfinite(t_c):
-            t_mt = t_c + W_MEAN
-            W_mc[i][j] = np.exp(ALPHA_MC * (t_mt ** BETA_MC))
+W_mc_scenarios = {}
+for sc_name, sc in MC_SCENARIOS.items():
+    W_mc_s = {}
+    for i in hex_ids:
+        W_mc_s[i] = {}
+        for j in J_ids:
+            t_c = raw_tt_car.get(i, {}).get(j, np.nan)
+            if np.isfinite(t_c):
+                t_mt = sc['delta'] * t_c + sc['W']
+                W_mc_s[i][j] = np.exp(ALPHA_MC * (t_mt ** BETA_MC))
+    W_mc_scenarios[sc_name] = W_mc_s
+    d_val = sc['delta']; w_val = sc['W']
+    print(f'  Built microtransit impedance: {sc_name}  (delta={d_val}, W={w_val} min)')
 
 print(f'  Car OD pairs: {len(car_df):,}')
 tock(t0, 'Build impedance matrices')
@@ -276,31 +246,60 @@ tock(t0, 'Build impedance matrices')
 #    no-car users (enc, nenc): mode-specific
 # ══════════════════════════════════════════════════════════════════════════════
 MODES = {
-    'car_only':         {'ec': W_car,     'enc': {},        'nec': W_car,     'nenc': {}},
-    'car_for_all':      {'ec': W_car,     'enc': W_car,     'nec': W_car,     'nenc': W_car},
-    'car_microtrans':   {'ec': W_car,     'enc': W_mc,      'nec': W_car,     'nenc': W_mc},
+    'car_only':            {'ec': W_car, 'enc': {},    'nec': W_car, 'nenc': {}},
+    'car_for_all':         {'ec': W_car, 'enc': W_car, 'nec': W_car, 'nenc': W_car},
+    'car_microtrans_opt':  {'ec': W_car, 'enc': W_mc_scenarios['car_microtrans_opt'],
+                            'nec': W_car, 'nenc': W_mc_scenarios['car_microtrans_opt']},
+    'car_microtrans':      {'ec': W_car, 'enc': W_mc_scenarios['car_microtrans'],
+                            'nec': W_car, 'nenc': W_mc_scenarios['car_microtrans']},
+    'car_microtrans_pess': {'ec': W_car, 'enc': W_mc_scenarios['car_microtrans_pess'],
+                            'nec': W_car, 'nenc': W_mc_scenarios['car_microtrans_pess']},
 }
 if W_transit:
-    MODES['transit_only']   = {'ec': {},        'enc': W_transit, 'nec': {},        'nenc': W_transit}
-    MODES['transit_for_all']= {'ec': W_transit, 'enc': W_transit, 'nec': W_transit, 'nenc': W_transit}
-    MODES['car_transit']    = {'ec': W_car,     'enc': W_transit, 'nec': W_car,     'nenc': W_transit}
+    # transit_only removed per model update -- 5 scenarios only
+    MODES['transit_for_all'] = {'ec': W_transit, 'enc': W_transit,
+                                 'nec': W_transit, 'nenc': W_transit}
+    MODES['car_transit']     = {'ec': W_car,      'enc': W_transit,
+                                 'nec': W_car,      'nenc': W_transit}
 
 MODE_COLORS = {
-    'car_only':          '#e74c3c',
-    'car_for_all':       '#2ecc71',
-    'transit_only':      '#3498db',
-    'transit_for_all':   '#1abc9c',
-    'car_transit':       '#9b59b6',
-    'car_microtrans':    '#e67e22',
+    'car_only':            '#e74c3c',
+    'car_for_all':         '#2ecc71',
+    'car_microtrans_opt':  '#f39c12',
+    'car_microtrans':      '#e67e22',
+    'car_microtrans_pess': '#d35400',
+    'transit_for_all':     '#1abc9c',
+    'car_transit':         '#9b59b6',
 }
 MODE_LABELS = {
-    'car_only':          'Car only',
-    'car_for_all':       'Car for all',
-    'transit_only':      'Transit only',
-    'transit_for_all':   'Transit for all',
-    'car_transit':       'Car + Transit (SKAT)',
-    'car_microtrans':    'Car + Microtransit',
+    'car_only':            'Car only',
+    'car_for_all':         'Car for all',
+    'car_microtrans_opt':  'Car + Microtransit (optimistic)',
+    'car_microtrans':      'Car + Microtransit (baseline)',
+    'car_microtrans_pess': 'Car + Microtransit (pessimistic)',
+    'transit_for_all':     'Transit for all',
+    'car_transit':         'Car + Transit (SKAT)',
 }
+MODE_LS = {
+    'car_only':            '-',
+    'car_for_all':         '--',
+    'car_microtrans_opt':  ':',
+    'car_microtrans':      '--',
+    'car_microtrans_pess': ':',
+    'transit_for_all':     '-',
+    'car_transit':         '-.',
+}
+MODE_LW = {
+    'car_only':            2.8,
+    'car_for_all':         2.2,
+    'car_microtrans_opt':  1.6,
+    'car_microtrans':      2.2,
+    'car_microtrans_pess': 1.6,
+    'transit_for_all':     2.2,
+    'car_transit':         2.2,
+}
+
+print(f'  Active modes ({len(MODES)}): {list(MODES.keys())}')
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 6. Pre-compute k nearest candidates per hex (sparse z_ij)
@@ -426,29 +425,64 @@ print(f'  Saved: {out_full}')
 # ══════════════════════════════════════════════════════════════════════════════
 print('\nGenerating plots...')
 
-fig, ax = plt.subplots(figsize=(14, 7))
+# Draw order: transit first, car cluster on top, MC scenarios grouped
+DRAW_ORDER = ['transit_for_all', 'car_transit',
+              'car_microtrans_pess', 'car_microtrans_opt',
+              'car_microtrans', 'car_for_all', 'car_only']
 
-for mode_name in MODES:
-    sub = res_df[res_df['mode']==mode_name].sort_values('P')
+# Annotation offsets to prevent stacking
+ANNOT_OFFSET = {
+    'car_only':            -0.015,
+    'car_for_all':         +0.015,
+    'car_microtrans':       0.000,
+    'car_microtrans_opt':  +0.030,
+    'car_microtrans_pess': -0.030,
+    'transit_for_all':     +0.010,
+    'car_transit':         -0.010,
+}
+
+fig, ax = plt.subplots(figsize=(16, 8))
+
+# Shade microtransit band (opt to pess)
+if all(m in res_df['mode'].unique()
+       for m in ['car_microtrans_opt','car_microtrans_pess']):
+    opt_sub  = res_df[res_df['mode']=='car_microtrans_opt'].sort_values('P')
+    pess_sub = res_df[res_df['mode']=='car_microtrans_pess'].sort_values('P')
+    ax.fill_between(opt_sub['P'], pess_sub['A_tilde'], opt_sub['A_tilde'],
+                    alpha=0.15, color='#e67e22',
+                    label='Car + Microtransit range (opt–pess)')
+
+for mode_name in DRAW_ORDER:
+    if mode_name not in res_df['mode'].unique():
+        continue
+    sub   = res_df[res_df['mode']==mode_name].sort_values('P')
     color = MODE_COLORS.get(mode_name, '#888')
     label = MODE_LABELS.get(mode_name, mode_name)
-    # True staircase step plot
-    ax.step(sub['P'], sub['A_tilde'], where='post',
-            color=color, lw=2.2, label=label)
-    # Annotate final value
-    ax.text(50.5, sub['A_tilde'].iloc[-1],
-            f'{sub["A_tilde"].iloc[-1]:.3f}',
-            fontsize=7.5, va='center', color=color)
+    lw    = MODE_LW.get(mode_name, 2.0)
+    ls    = MODE_LS.get(mode_name, '-')
 
-ax.set_xlabel('Number of clinic stops (P)', fontsize=12)
-ax.set_ylabel(r'$\tilde{\mathcal{A}}$ (normalized accessibility)', fontsize=12)
-ax.set_title('Primal Accessibility vs P — Allocation BLP (correct submodular formulation)\n'
-             'Rockingham County, NC  |  Uniform o_j  |  k=15 sparse z_ij',
-             fontsize=11, pad=6)
-ax.legend(fontsize=9, loc='upper left')
+    ax.step(sub['P'], sub['A_tilde'], where='post',
+            color=color, lw=lw, ls=ls, label=label)
+
+    # Right-side annotation
+    final = float(sub['A_tilde'].iloc[-1])
+    yann  = final + ANNOT_OFFSET.get(mode_name, 0)
+    ax.text(51.0, yann, f'{final:.4f}',
+            fontsize=9, va='center', color=color,
+            fontweight='bold' if mode_name in ['car_only','transit_for_all'] else 'normal')
+
+ax.set_xlabel('Number of clinic stops (P)', fontsize=14)
+ax.set_ylabel(r'$\tilde{\mathcal{A}}$ (normalised accessibility)', fontsize=14)
+ax.set_title('Primal Accessibility vs $P$ — Allocation BLP\n'
+             'Rockingham County, NC  |  Uniform $o_j$  |  Correct submodular formulation\n'
+             'Car + Microtransit shown as band: optimistic ($\\delta=1.0$, $W=3.74$ min) '
+             'to pessimistic ($\\delta=2.0$, $W=17.67$ min)',
+             fontsize=12, pad=8)
+ax.legend(fontsize=11, loc='upper left', framealpha=0.9)
 ax.grid(alpha=0.3)
-ax.set_xlim(1, 53)
+ax.set_xlim(1, 55)
 ax.set_ylim(0, 1.05)
+ax.tick_params(axis='both', labelsize=12)
 
 plt.tight_layout()
 out_plot = f'{OUTPUTS}/primal_accessibility_step_plot.png'
@@ -466,8 +500,8 @@ if os.path.exists(linear_csv):
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
     fig.suptitle('Primal Accessibility: Allocation BLP vs Original Linear Formulation\n'
-                 'Car only, Uniform o_j  |  Rockingham County, NC',
-                 fontsize=11, y=1.02)
+                 'Car only, Uniform $o_j$  |  Rockingham County, NC',
+                 fontsize=13, y=1.02)
 
     # Left: side by side step plots
     ax = axes[0]
@@ -477,12 +511,12 @@ if os.path.exists(linear_csv):
     ax.step(linear_df['P'], linear_df['A_tilde'], where='post',
             color='#95a5a6', lw=2, ls='--', label='Linear greedy (original, incorrect)')
 
-    ax.set_xlabel('P', fontsize=11)
-    ax.set_ylabel(r'$\tilde{\mathcal{A}}$', fontsize=11)
-    ax.set_title('A_tilde vs P\n(same objective, different formulations)',
-                 fontsize=10, pad=5)
-    ax.legend(fontsize=9)
+    ax.set_xlabel('P', fontsize=13)
+    ax.set_ylabel(r'$\tilde{\mathcal{A}}$', fontsize=13)
+    ax.set_title('$\\tilde{\\mathcal{A}}$ vs $P$', fontsize=12, pad=5)
+    ax.legend(fontsize=11)
     ax.grid(alpha=0.3)
+    ax.tick_params(axis='both', labelsize=11)
     ax.set_xlim(1, 51); ax.set_ylim(0)
 
     # Right: difference plot
@@ -495,11 +529,12 @@ if os.path.exists(linear_csv):
     colors_diff = ['#e74c3c' if d > 0 else '#3498db' for d in diff]
     ax2.bar(common_P, diff, color=colors_diff, edgecolor='white', linewidth=0.3)
     ax2.axhline(0, color='black', lw=0.8)
-    ax2.set_xlabel('P', fontsize=11)
-    ax2.set_ylabel('A_tilde (Allocation) - A_tilde (Linear)', fontsize=10)
-    ax2.set_title('Difference: Allocation minus Linear\nRed = allocation better, Blue = linear better',
-                  fontsize=10, pad=5)
+    ax2.set_xlabel('P', fontsize=13)
+    ax2.set_ylabel('Allocation minus Linear', fontsize=13)
+    ax2.set_title('Difference: Allocation BLP $-$ Linear\nRed = allocation higher  Blue = linear higher',
+                  fontsize=12, pad=5)
     ax2.grid(axis='y', alpha=0.3)
+    ax2.tick_params(axis='both', labelsize=11)
     ax2.set_xlim(0.3, 51)
 
     plt.tight_layout()
